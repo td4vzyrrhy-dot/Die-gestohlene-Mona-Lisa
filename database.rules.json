@@ -1,0 +1,76 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "groups": {
+      "$code": {
+        ".read": "auth != null && $code.matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/)",
+        ".write": "auth != null && $code.matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/) && (data.child('members').child(auth.uid).exists() || (!data.exists() && newData.child('phase').val() == 'waiting' && newData.child('members').child(auth.uid).child('role').val() == 'A') || (data.child('phase').val() == 'waiting' && newData.child('members').child(auth.uid).exists()))",
+        ".validate": "newData.hasChildren(['settings','members','phase','jokers','solved'])",
+        "settings": {
+          ".validate": "newData.hasChildren(['groupSize','createdAt','instanceId'])",
+          "groupSize": {
+            ".validate": "(newData.val() == 3 || newData.val() == 4 || newData.val() == 5) && (!data.exists() || newData.val() == data.val())"
+          },
+          "createdAt": {
+            ".validate": "(newData.isNumber()) && (!data.exists() || newData.val() == data.val())"
+          },
+          "instanceId": {
+            ".validate": "(newData.isString()) && (!data.exists() || newData.val() == data.val())"
+          },
+          "$other": {
+            ".validate": false
+          }
+        },
+        "members": {
+          "$uid": {
+            ".validate": "newData.hasChildren(['role','joinedAt','online']) && ((!data.exists() && $uid == auth.uid) || (data.exists() && newData.child('role').val() == data.child('role').val() && newData.child('joinedAt').val() == data.child('joinedAt').val() && ($uid == auth.uid || newData.child('online').val() == data.child('online').val())))",
+            "role": {
+              ".validate": "newData.isString() && (newData.val() == 'A' || newData.val() == 'B' || newData.val() == 'C' || (newData.val() == 'D' && newData.parent().parent().parent().child('settings/groupSize').val() >= 4) || (newData.val() == 'E' && newData.parent().parent().parent().child('settings/groupSize').val() == 5))"
+            },
+            "joinedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "online": {
+              ".validate": "newData.isBoolean()"
+            },
+            "$other": {
+              ".validate": false
+            }
+          }
+        },
+        "phase": {
+          ".validate": "newData.isString() && newData.val().matches(/^(waiting|newspaper|discussion|board|verdict|questions|final)$/) && (!data.exists() || root.child('groups').child($code).child('members').child(auth.uid).exists() || newData.val() == data.val())"
+        },
+        "readyMembers": {},
+        "board": {
+          "positions": {},
+          "connections": {},
+          "discardedCards": {},
+          "order": {},
+          "layoutVersion": {},
+          "cardBundleVersion": {},
+          "thoughts": {},
+          "$other": {
+            ".validate": false
+          }
+        },
+        "jokers": {
+          "remaining": {
+            ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 3"
+          }
+        },
+        "verdict": {
+          ".validate": "newData.val() == 'fake' || newData.val() == 'real'"
+        },
+        "solved": {
+          ".validate": "newData.isBoolean() && (newData.val() == false || root.child('groups').child($code).child('members').child(auth.uid).exists())"
+        },
+        "finalAnswers": {},
+        "$other": {
+          ".validate": false
+        }
+      }
+    }
+  }
+}
