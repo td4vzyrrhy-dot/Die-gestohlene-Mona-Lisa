@@ -24,7 +24,7 @@ export function decodeGroup(code, raw) {
   return {
     groupCode: code, groupSize: raw.settings.groupSize, createdAt: raw.settings.createdAt,
     instanceId: raw.settings.instanceId,
-    members: Object.entries(raw.members || {}).map(([id,m]) => ({ id, role:m.role, joinedAt:m.joinedAt, online:m.online === true, simulated:false })).sort((a,b) => roles.indexOf(a.role)-roles.indexOf(b.role)),
+    members: Object.entries(raw.members || {}).map(([id,m]) => ({ id, role:m.role, joinedAt:m.joinedAt, online:m.online === true, ...(m.replaces ? {replaces:m.replaces} : {}), simulated:false })).sort((a,b) => roles.indexOf(a.role)-roles.indexOf(b.role)),
     phase: raw.phase || 'waiting',
     readyMembers: keys(raw.readyMembers),
     board: {
@@ -43,7 +43,7 @@ export function encodeGroup(group) {
   const board = group.board;
   return {
     settings:{groupSize:group.groupSize,createdAt:group.createdAt,instanceId:group.instanceId},
-    members:Object.fromEntries(group.members.map(m => [m.id,{role:m.role,joinedAt:m.joinedAt,online:m.online === true}])),
+    members:Object.fromEntries(group.members.map(m => [m.id,{role:m.role,joinedAt:m.joinedAt,online:m.online === true,...(m.replaces ? {replaces:m.replaces} : {})}])),
     phase:group.phase,
     readyMembers:Object.fromEntries(group.readyMembers.map(role => [role,true])),
     board:{
@@ -224,6 +224,32 @@ export function makeFirebaseAdapter(sdk, db, memberId, callbacks = {}) {
     if (!result.committed || !joined?.members.some(m => m.id === memberId)) throw failure(reason || 'Gruppe nicht gefunden.');
     return subscribe(targetCode,joined);
   }
+  // ==========================
+  // FIREBASE: recover a saved investigation using its code alone.
+  // Replace one offline membership atomically; never overwrite the shared game.
+  async function recoverGroup(targetCode, expectedInstance) {
+    if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(targetCode)) throw failure('Bitte gib einen gültigen Gruppencode mit vier Zeichen ein.');
+    await waitConnected();
+    const snapshot = await sdk.get(groupRef(targetCode));
+    const initial = snapshot.val();
+    if (!initial?.settings || (expectedInstance && initial.settings.instanceId !== expectedInstance)) throw failure('Diese Ermittlung wurde nicht gefunden oder bereits zurückgesetzt.');
+    const originalInstance = initial.settings.instanceId;
+    let reason = '';
+    const result = await sdk.runTransaction(groupRef(targetCode),raw => {
+      if (raw == null) return null;
+      if (raw.settings?.instanceId !== originalInstance) { reason = 'Diese Ermittlung wurde zurückgesetzt.'; return; }
+      if (raw.members?.[memberId]) { raw.members[memberId].online = true; return raw; }
+      const available = Object.entries(raw.members || {}).filter(([,m]) => m.online === false).sort((a,b) => roles.indexOf(a[1].role)-roles.indexOf(b[1].role))[0];
+      if (!available) { reason = 'Alle bisherigen Rollen sind noch online. Schließe die Ermittlung auf dem bisherigen Gerät und versuche es nach einem kurzen Moment erneut.'; return; }
+      const [oldId,oldMember] = available;
+      raw.members[memberId] = {role:oldMember.role,joinedAt:oldMember.joinedAt,online:true,replaces:oldId};
+      delete raw.members[oldId];
+      return raw;
+    },{applyLocally:false});
+    const recovered = decodeGroup(targetCode,result.snapshot.val());
+    if (!result.committed || !recovered?.members.some(m => m.id === memberId)) throw failure(reason || 'Die Ermittlung konnte nicht fortgesetzt werden.');
+    return subscribe(targetCode,recovered);
+  }
   async function resume(targetCode, expectedInstance) {
     await waitConnected();
     const snapshot = await sdk.get(groupRef(targetCode));
@@ -297,7 +323,7 @@ export function makeFirebaseAdapter(sdk, db, memberId, callbacks = {}) {
     if (!result.committed) throw failure('Die Gruppe konnte nicht zurückgesetzt werden.');
     unsubscribe();
   }
-  return {memberId, createGroup, joinGroup, resume, mutate, leaveGroup, deleteGroup, flush,
+  return {memberId, createGroup, joinGroup, recoverGroup, resume, mutate, leaveGroup, deleteGroup, flush,
     readGroup:target => target === code ? rebuild() : null,
     isConnected:() => connected, pendingCount:() => pending.length,
     unsubscribe, destroy() { destroyed = true; unsubscribe(); stopConnection(); }

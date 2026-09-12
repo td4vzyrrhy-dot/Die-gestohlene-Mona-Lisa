@@ -200,9 +200,30 @@ function resumeCloudGroup() {
   if (!resumeCandidate) return;
   const candidate = resumeCandidate;
   return cloudAction(async adapter => {
-    const shared = await adapter.resume(candidate.state.groupCode,candidate.state.instanceId);
+    const sameDevice = candidate.clientId === clientId;
+    const shared = sameDevice
+      ? await adapter.resume(candidate.state.groupCode,candidate.state.instanceId)
+      : await adapter.recoverGroup(candidate.state.groupCode,candidate.state.instanceId);
     closeDialog(); resumeCandidate = null;
-    enterCloudGroup(shared,candidate.state);
+    enterCloudGroup(shared,sameDevice ? candidate.state : {phase:shared.solved ? 'final' : shared.phase});
+  });
+}
+// FIREBASE: the saved shared phase is authoritative for code-only recovery.
+function recoverInvestigation(code) {
+  code = code.trim().toUpperCase();
+  if (!/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/.test(code)) {
+    document.getElementById('join-error').textContent = 'Bitte gib einen gültigen Gruppencode mit vier Zeichen ein.'; return;
+  }
+  if (DEMO_MODE) return;
+  return cloudAction(async adapter => {
+    const shared = await adapter.recoverGroup(code);
+    const saved = loadGameState();
+    const personal = saved?.clientId === clientId && saved.state.groupCode === code && saved.state.instanceId === shared.instanceId ? saved.state : {};
+    const phase = shared.solved ? 'final' : shared.phase;
+    closeDialog(); resumeCandidate = null;
+    enterCloudGroup(shared,{...personal,phase});
+    connectionStatus();
+    toast('Ermittlung wiederhergestellt · Ermittler ' + gameState.role);
   });
 }
 function readGroup(code = gameState.groupCode) {
@@ -297,6 +318,10 @@ function handleRemoteGroup() {
   if (!shared) {
     openDialog('Ermittlung zurückgesetzt', '<p>Die Daten dieser Gruppe wurden auf einem anderen Gerät oder in einem anderen Tab gelöscht.</p>', action('ZUR STARTSEITE','reset-local'), true); return;
   }
+  if (!DEMO_MODE && !shared.members.some(m => m.id === clientId)) {
+    firebaseAdapter?.unsubscribe();
+    openDialog('Rolle auf anderem Gerät fortgesetzt', '<p>Deine bisherige Rolle wurde inzwischen auf einem anderen Gerät übernommen. Der gemeinsame Ermittlungsstand bleibt erhalten.</p>', action('ZUR STARTSEITE','reset-local'), true); return;
+  }
   syncGroupState(shared);
   if (shared.solved && !['final','notebook','report'].includes(gameState.phase)) setPhase('final');
   else if (!DEMO_MODE && gameState.phase === 'waiting' && shared.phase !== 'waiting') setPhase('newspaper');
@@ -390,7 +415,7 @@ function renderStart() {
   return `<section class="hero"><div class="hero-copy"><p class="eyebrow">EIN GEMÄLDE. VIELE SPUREN. EINE WAHRHEIT.</p><h1>DIE GESTOHLENE<br><em>MONA LISA</em></h1><p class="subtitle">Ein chemisches Mystery</p><p class="title-author">von Dr- Anne-Katrin Bachmann</p><div class="hero-story"><p><strong>Paris. 08:42 Uhr.</strong><br>Die Mona Lisa ist verschwunden.</p><p>Wenige Stunden später wird ein Gemälde sichergestellt.<br>Doch ist es wirklich das Original?</p></div><div class="mission"><p class="eyebrow">EUER AUFTRAG</p><p>Findet die Wahrheit heraus.</p></div>${action('ERMITTLUNG STARTEN <span aria-hidden="true">→</span>','start')}</div><div class="office-scene" aria-hidden="true"><div class="office-placard"><span class="eyebrow">BUREAU D’ENQUÊTE · PARIS</span><span>Die Wahrheit liegt<br>in den Details.</span><small>AKTE 017 / KUNSTDIEBSTAHL</small></div></div></section>`;
 }
 function renderGroup() {
-  return page('ERMITTLUNGSTEAM<br>BILDEN', `<p class="lede muted">Ein Fall. Verschiedene Perspektiven. Nur gemeinsam ergibt sich das ganze Bild.</p><div class="split"><section class="panel"><p class="eyebrow">01 / TEAM GRÜNDEN</p><h3>NEUE GRUPPE ERSTELLEN</h3><p>Wie viele Ermittler arbeiten in eurer Gruppe?</p><div class="size-options">${[3,4,5].map(n => action(n + ' PERSONEN','size','secondary small',`data-size="${n}" aria-pressed="${gameState.groupSize === n}"`)).join('')}</div>${action('GRUPPE ERSTELLEN','create')}</section><section class="panel"><p class="eyebrow">02 / TEAM VERSTÄRKEN</p><h3>GRUPPE BEITRETEN</h3><form id="join-form"><label for="join-code">GRUPPENCODE</label><input id="join-code" name="code" placeholder="z. B. M7KP" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" required aria-describedby="join-error"><div class="actions"><button type="submit" aria-label="Gruppe beitreten">BEITRETEN</button></div><p id="join-error" class="error-text" role="alert"></p></form></section></div><p class="notice">${DEMO_MODE ? 'Demo-Modus: Gruppen funktionieren lokal in Tabs desselben Browsers. Für einen Test allein kannst du fehlende Mitglieder simulieren.' : 'Gemeinsam auf mehreren Geräten: Erstellt eine Gruppe und teilt den Gruppencode. Jedes Gerät erhält eine eigene Rolle. Persönliche Notizen bleiben auf eurem Gerät.'}</p>`, 'GEMEINSAM ERMITTELN · 3–5 PERSONEN', false);
+  return page('ERMITTLUNGSTEAM<br>BILDEN', `<p class="lede muted">Ein Fall. Verschiedene Perspektiven. Nur gemeinsam ergibt sich das ganze Bild.</p><div class="split"><section class="panel"><p class="eyebrow">01 / TEAM GRÜNDEN</p><h3>NEUE GRUPPE ERSTELLEN</h3><p>Wie viele Ermittler arbeiten in eurer Gruppe?</p><div class="size-options">${[3,4,5].map(n => action(n + ' PERSONEN','size','secondary small',`data-size="${n}" aria-pressed="${gameState.groupSize === n}"`)).join('')}</div>${action('GRUPPE ERSTELLEN','create')}</section><section class="panel"><p class="eyebrow">02 / TEAM VERSTÄRKEN</p><h3>GRUPPE BEITRETEN</h3><form id="join-form"><label for="join-code">GRUPPENCODE</label><input id="join-code" name="code" placeholder="z. B. M7KP" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" required aria-describedby="join-error"><div class="actions"><button type="submit" aria-label="Gruppe beitreten">BEITRETEN</button>${!DEMO_MODE ? action('ERMITTLUNG FORTSETZEN','recover-code','secondary') : ''}</div><p id="join-error" class="error-text" role="alert"></p></form></section></div><p class="notice">${DEMO_MODE ? 'Demo-Modus: Gruppen funktionieren lokal in Tabs desselben Browsers. Für einen Test allein kannst du fehlende Mitglieder simulieren.' : 'Gemeinsam auf mehreren Geräten: Erstellt eine Gruppe und teilt den Gruppencode. Jedes Gerät erhält eine eigene Rolle. Persönliche Notizen bleiben auf eurem Gerät.'}</p>`, 'GEMEINSAM ERMITTELN · 3–5 PERSONEN', false);
 }
 function renderWaiting() {
   return page('EUER ERMITTLUNGSTEAM', `<div class="code-box"><p class="eyebrow">EUER GRUPPENCODE</p><div class="group-code">${gameState.groupCode}</div><p>Gebt diesen Code an eure Mitermittler weiter.</p></div><ul class="members">${ROLES.slice(0,gameState.groupSize).map(role => { const m = gameState.members.find(m => m.role === role); return `<li><span class="avatar">${role}</span><span>Ermittler ${role}${role === gameState.role ? ' · Du' : ''}</span><small>${m ? m.simulated ? 'Verbunden · simuliert' : (!DEMO_MODE && !m.online ? 'Verbindung unterbrochen' : 'Verbunden') : 'Wartet auf Beitritt'}</small></li>`; }).join('')}</ul><p aria-live="polite">${gameState.members.length === gameState.groupSize ? 'Das Ermittlungsteam ist vollständig.' : `${gameState.members.length} von ${gameState.groupSize} Ermittlern sind verbunden.`}</p><div class="actions">${action('FALLAKTE ÖFFNEN','open-case','',gameState.members.length < gameState.groupSize ? 'disabled' : '')}${DEMO_MODE && gameState.members.length < gameState.groupSize ? action('Gruppe simulieren','simulate','secondary small') : ''}${action('Gruppe verlassen','leave','secondary small')}</div><p class="help-text">Deine Rolle wird nach der Reihenfolge des Beitritts vergeben. Jeder erhält eigene Hinweise.</p>`);
@@ -800,6 +825,7 @@ document.addEventListener('click', event => {
   switch (name) {
     case 'start': if (gameState.phase === 'start') setPhase('group'); break;
     case 'size': gameState.groupSize = Number(button.dataset.size); saveGameState(); render(); break;
+    case 'recover-code': recoverInvestigation(document.getElementById('join-code').value); break;
     case 'create': if (gameState.phase === 'group') createGroup(); break;
     case 'simulate': if (gameState.phase === 'waiting' && DEMO_MODE) simulateGroup(); break;
     case 'leave': leaveGroup(); break;

@@ -5,7 +5,7 @@
     "groups": {
       "$code": {
         ".read": "auth != null && $code.matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/)",
-        ".write": "auth != null && $code.matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/) && (data.child('members').child(auth.uid).exists() || (!data.exists() && newData.child('phase').val() == 'waiting' && newData.child('members').child(auth.uid).child('role').val() == 'A') || (data.child('phase').val() == 'waiting' && newData.child('members').child(auth.uid).exists()))",
+        ".write": "auth != null && $code.matches(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{4}$/) && (data.child('members').child(auth.uid).exists() || (!data.exists() && newData.child('phase').val() == 'waiting' && newData.child('members').child(auth.uid).child('role').val() == 'A') || (data.child('phase').val() == 'waiting' && newData.child('members').child(auth.uid).exists()) || (newData.child('members').child(auth.uid).child('replaces').isString() && data.child('members').child(newData.child('members').child(auth.uid).child('replaces').val()).child('online').val() == false && data.child('members').child(newData.child('members').child(auth.uid).child('replaces').val()).child('role').val() == newData.child('members').child(auth.uid).child('role').val() && !newData.child('members').child(newData.child('members').child(auth.uid).child('replaces').val()).exists()))",
         ".validate": "newData.hasChildren(['settings','members','phase','jokers','solved'])",
         "settings": {
           ".validate": "newData.hasChildren(['groupSize','createdAt','instanceId'])",
@@ -36,6 +36,9 @@
             },
             "$other": {
               ".validate": false
+            },
+            "replaces": {
+              ".validate": "newData.isString() && (!data.exists() || newData.val() == data.val())"
             }
           }
         },
@@ -64,7 +67,7 @@
           ".validate": "newData.val() == 'fake' || newData.val() == 'real'"
         },
         "solved": {
-          ".validate": "newData.isBoolean() && (newData.val() == false || root.child('groups').child($code).child('members').child(auth.uid).exists())"
+          ".validate": "newData.isBoolean() && (newData.val() == false || newData.val() == data.val() || root.child('groups').child($code).child('members').child(auth.uid).exists())"
         },
         "finalAnswers": {},
         "$other": {
